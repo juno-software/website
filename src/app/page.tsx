@@ -1,103 +1,110 @@
-import Image from "next/image";
+'use client';
+
+import { useEffect, useRef } from 'react';
 
 export default function Home() {
-  return (
-    <div className="font-sans grid grid-rows-[20px_1fr_20px] items-center justify-items-center min-h-screen p-8 pb-20 gap-16 sm:p-20">
-      <main className="flex flex-col gap-[32px] row-start-2 items-center sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={180}
-          height={38}
-          priority
-        />
-        <ol className="font-mono list-inside list-decimal text-sm/6 text-center sm:text-left">
-          <li className="mb-2 tracking-[-.01em]">
-            Get started by editing{" "}
-            <code className="bg-black/[.05] dark:bg-white/[.06] font-mono font-semibold px-1 py-0.5 rounded">
-              src/app/page.tsx
-            </code>
-            .
-          </li>
-          <li className="tracking-[-.01em]">
-            Save and see your changes instantly.
-          </li>
-        </ol>
+  const canvasRef = useRef<HTMLCanvasElement>(null);
 
-        <div className="flex gap-4 items-center flex-col sm:flex-row">
-          <a
-            className="rounded-full border border-solid border-transparent transition-colors flex items-center justify-center bg-foreground text-background gap-2 hover:bg-[#383838] dark:hover:bg-[#ccc] font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 sm:w-auto"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={20}
-              height={20}
-            />
-            Deploy now
-          </a>
-          <a
-            className="rounded-full border border-solid border-black/[.08] dark:border-white/[.145] transition-colors flex items-center justify-center hover:bg-[#f2f2f2] dark:hover:bg-[#1a1a1a] hover:border-transparent font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 w-full sm:w-auto md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Read our docs
-          </a>
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    // Set canvas size
+    const setCanvasSize = () => {
+      canvas.width = window.innerWidth;
+      canvas.height = window.innerHeight;
+    };
+    setCanvasSize();
+    window.addEventListener('resize', setCanvasSize);
+
+    // Star particles
+    const stars: Array<{
+      x: number;
+      y: number;
+      radius: number;
+      opacity: number;
+      twinkleSpeed: number;
+      twinklePhase: number;
+    }> = [];
+
+    // Create stars
+    for (let i = 0; i < 200; i++) {
+      stars.push({
+        x: Math.random() * canvas.width,
+        y: Math.random() * canvas.height,
+        radius: Math.random() * 2,
+        opacity: Math.random(),
+        twinkleSpeed: Math.random() * 0.05,
+        twinklePhase: Math.random() * Math.PI * 2
+      });
+    }
+
+    // Animation
+    let animationFrame: number;
+    const animate = () => {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      // Draw stars with twinkling effect
+      stars.forEach((star) => {
+        star.twinklePhase += star.twinkleSpeed;
+        const twinkle = Math.sin(star.twinklePhase) * 0.5 + 0.5;
+
+        ctx.beginPath();
+        ctx.arc(star.x, star.y, star.radius, 0, Math.PI * 2);
+        ctx.fillStyle = `rgba(255, 255, 255, ${star.opacity * twinkle})`;
+        ctx.fill();
+      });
+
+      animationFrame = requestAnimationFrame(animate);
+    };
+    animate();
+
+    return () => {
+      window.removeEventListener('resize', setCanvasSize);
+      cancelAnimationFrame(animationFrame);
+    };
+  }, []);
+
+  return (
+    <div className="relative min-h-screen w-full overflow-hidden bg-gradient-to-b from-[#000000] via-[#0a0612] to-[#000000]">
+      {/* Canvas for stars */}
+      <canvas
+        ref={canvasRef}
+        className="absolute inset-0 opacity-80"
+      />
+
+      {/* Nebula effect */}
+      <div className="nebula-glow"></div>
+
+      {/* Content */}
+      <main className="relative z-10 flex min-h-screen flex-col items-center justify-center px-4">
+        <div className="text-center space-y-12">
+          {/* Company Name with glow effect */}
+          <div className="relative">
+            <h1 className="company-name text-7xl md:text-9xl font-bold tracking-wider">
+              JUNO
+            </h1>
+            <p className="software-text text-2xl md:text-4xl font-light tracking-[0.3em] mt-2">
+              SOFTWARE
+            </p>
+          </div>
+
+          {/* Decorative line */}
+          <div className="flex items-center justify-center gap-4 py-8">
+            <div className="h-px w-12 bg-gradient-to-r from-transparent via-blue-400 to-transparent"></div>
+            <div className="w-1 h-1 rounded-full bg-blue-400 animate-pulse"></div>
+            <div className="h-px w-12 bg-gradient-to-r from-transparent via-purple-400 to-transparent"></div>
+          </div>
+
+          {/* Coming Soon */}
+          <p className="text-gray-500 text-lg md:text-xl font-light tracking-widest uppercase">
+            Coming Soon
+          </p>
         </div>
       </main>
-      <footer className="row-start-3 flex gap-[24px] flex-wrap items-center justify-center">
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/file.svg"
-            alt="File icon"
-            width={16}
-            height={16}
-          />
-          Learn
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/window.svg"
-            alt="Window icon"
-            width={16}
-            height={16}
-          />
-          Examples
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/globe.svg"
-            alt="Globe icon"
-            width={16}
-            height={16}
-          />
-          Go to nextjs.org →
-        </a>
-      </footer>
     </div>
   );
 }
