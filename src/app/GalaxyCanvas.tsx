@@ -195,7 +195,7 @@ export default function GalaxyCanvas() {
         const x = Math.random() * W();
         const y = Math.random() * H();
         const color = dimColors[Math.floor(Math.random() * dimColors.length)];
-        stars.push(makeStar(midStarsContainer, x, y, 0.5 + Math.random() * 1.0, color,
+        stars.push(makeStar(midStarsContainer, x, y, 0.5 + Math.random(), color,
           0.35 + Math.random() * 0.5, 0.006 + Math.random() * 0.018));
       }
 
