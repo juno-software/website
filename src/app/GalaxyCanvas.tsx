@@ -173,7 +173,7 @@ const FRAGMENT = `
     vec2 uv = vUV;
     float aspect = uResolution.x / uResolution.y;
     vec2 galCenter = vec2(0.5, 0.48);
-    float t = uTime * 0.015;
+    float t = uTime * 0.007;
     float dGC = length((uv - galCenter) * vec2(aspect, 1.0));
 
     // ── Parallax UVs — 7 depth levels ───────────────────────────
@@ -192,12 +192,12 @@ const FRAGMENT = `
     // ════════════════════════════════════════════════════════════
     // DEPTH 1 — Deep nebula (furthest back)
     // ════════════════════════════════════════════════════════════
-    col += nebulaLayer(uvDeepNeb, vec2(0.45, 0.42), aspect, t,
-      4.0, vec2(0.0),  vec3(0.12, 0.04, 0.32), 0.80, 0.0075, 0.0, 0.95, vec2(1.0, 1.4));   // deep violet — tall, left of center
-    col += nebulaLayer(uvDeepNeb, vec2(0.58, 0.55), aspect, t,
-      5.0, vec2(50.0), vec3(0.06, 0.10, 0.35), 0.75, 0.009, 1.5, 1.0, vec2(1.5, 0.8));     // navy blue — wide, lower right
-    col += nebulaLayer(uvDeepNeb, vec2(0.38, 0.52), aspect, t,
-      3.8, vec2(70.0), vec3(0.22, 0.04, 0.28), 0.55, 0.008, 0.8, 0.80, vec2(1.2, 1.0));    // rich purple — left
+    col += nebulaLayer(uvDeepNeb, vec2(0.28, 0.35), aspect, t,
+      4.0, vec2(0.0),  vec3(0.12, 0.04, 0.32), 0.80, 0.0075, 0.0, 0.95, vec2(1.0, 1.4));   // deep violet — upper left
+    col += nebulaLayer(uvDeepNeb, vec2(0.70, 0.62), aspect, t,
+      5.0, vec2(50.0), vec3(0.06, 0.10, 0.35), 0.75, 0.009, 1.5, 1.0, vec2(1.5, 0.8));     // navy blue — lower right
+    col += nebulaLayer(uvDeepNeb, vec2(0.25, 0.60), aspect, t,
+      3.8, vec2(70.0), vec3(0.22, 0.04, 0.28), 0.55, 0.008, 0.8, 0.80, vec2(1.2, 1.0));    // rich purple — far left
 
     // Galactic core glow — warm purple-pink
     float coreGlow = exp(-dGC * dGC * 8.0) * 0.45;
@@ -214,12 +214,12 @@ const FRAGMENT = `
     // ════════════════════════════════════════════════════════════
     // DEPTH 3 — Mid nebula (partially obscures bg stars)
     // ════════════════════════════════════════════════════════════
-    col += nebulaLayer(uvMidNeb, vec2(0.55, 0.40), aspect, t,
-      5.5, vec2(100.0), vec3(0.18, 0.05, 0.30), 0.50, 0.006, 3.0, 0.75, vec2(0.9, 1.3));   // plum — tall, right of center
-    col += nebulaLayer(uvMidNeb, vec2(0.40, 0.58), aspect, t,
-      4.2, vec2(150.0), vec3(0.08, 0.12, 0.30), 0.45, 0.007, 2.0, 0.85, vec2(1.6, 0.7));   // royal blue — wide band, lower left
-    col += nebulaLayer(uvMidNeb, vec2(0.62, 0.48), aspect, t,
-      4.8, vec2(170.0), vec3(0.30, 0.06, 0.24), 0.35, 0.0065, 2.5, 0.70, vec2(1.0, 1.1));  // magenta — right side
+    col += nebulaLayer(uvMidNeb, vec2(0.68, 0.30), aspect, t,
+      5.5, vec2(100.0), vec3(0.18, 0.05, 0.30), 0.50, 0.006, 3.0, 0.75, vec2(0.9, 1.3));   // plum — upper right
+    col += nebulaLayer(uvMidNeb, vec2(0.30, 0.68), aspect, t,
+      4.2, vec2(150.0), vec3(0.08, 0.12, 0.30), 0.45, 0.007, 2.0, 0.85, vec2(1.6, 0.7));   // royal blue — lower left
+    col += nebulaLayer(uvMidNeb, vec2(0.76, 0.50), aspect, t,
+      4.8, vec2(170.0), vec3(0.30, 0.06, 0.24), 0.35, 0.0065, 2.5, 0.70, vec2(1.0, 1.1));  // magenta — far right
 
     // ════════════════════════════════════════════════════════════
     // DEPTH 4 — Mid-field stars (moderate, fewer)
@@ -230,12 +230,12 @@ const FRAGMENT = `
     // ════════════════════════════════════════════════════════════
     // DEPTH 5 — Near nebula wisps (foreground haze over mid stars)
     // ════════════════════════════════════════════════════════════
-    col += nebulaLayer(uvNearNeb, vec2(0.48, 0.35), aspect, t,
-      6.0, vec2(200.0), vec3(0.25, 0.08, 0.32), 0.35, 0.008, 4.5, 0.65, vec2(1.3, 0.8));   // bright purple — upper, wide
-    col += nebulaLayer(uvNearNeb, vec2(0.35, 0.50), aspect, t,
-      3.5, vec2(250.0), vec3(0.32, 0.10, 0.28), 0.28, 0.005, 5.5, 0.70, vec2(0.8, 1.5));   // hot pink — left, tall
-    col += nebulaLayer(uvNearNeb, vec2(0.60, 0.60), aspect, t,
-      5.2, vec2(280.0), vec3(0.10, 0.14, 0.34), 0.30, 0.007, 5.0, 0.68, vec2(1.4, 0.9));   // cerulean — lower right, wide
+    col += nebulaLayer(uvNearNeb, vec2(0.50, 0.18), aspect, t,
+      6.0, vec2(200.0), vec3(0.25, 0.08, 0.32), 0.35, 0.008, 4.5, 0.65, vec2(1.3, 0.8));   // bright purple — top center
+    col += nebulaLayer(uvNearNeb, vec2(0.20, 0.50), aspect, t,
+      3.5, vec2(250.0), vec3(0.32, 0.10, 0.28), 0.28, 0.005, 5.5, 0.70, vec2(0.8, 1.5));   // hot pink — far left
+    col += nebulaLayer(uvNearNeb, vec2(0.76, 0.74), aspect, t,
+      5.2, vec2(280.0), vec3(0.10, 0.14, 0.34), 0.30, 0.007, 5.0, 0.68, vec2(1.4, 0.9));   // cerulean — far lower right
 
     // ════════════════════════════════════════════════════════════
     // DEPTH 6 — Near bright stars (sparse, warm/cool tinted)
