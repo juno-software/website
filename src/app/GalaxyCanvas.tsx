@@ -402,7 +402,7 @@ function doRender(containerRef: RefObject<HTMLDivElement | null>) {
             const dt = app!.ticker.deltaTime;
             time += dt;
 
-            const factor = 1 - Math.pow(0.945, dt);
+            const factor = 1 - Math.pow(0.80, dt);
             const prevX = smooth.x, prevY = smooth.y;
             smooth.x += (mouse.x - smooth.x) * factor;
             smooth.y += (mouse.y - smooth.y) * factor;
