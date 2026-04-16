@@ -111,7 +111,14 @@ const FRAGMENT = `
 
         float d = length(pxUV - starPx);
 
-        float twinkle = 0.7 + 0.3 * sin(uTime * (1.5 + h2 * 3.0) + h * 62.83);
+        // Per-star twinkle: ~30% don't blink, rest have varied speed & amplitude
+        float twinkleType = hash(nc * 5.7 + seed + 99.0);
+        float twinkle = 1.0;
+        if (twinkleType > 0.3) {
+          float speed = 0.5 + twinkleType * 4.0;       // 0.5 – 4.5 range
+          float amplitude = 0.1 + 0.4 * (twinkleType - 0.3) / 0.7;  // 0.1 – 0.5
+          twinkle = 1.0 - amplitude + amplitude * sin(uTime * speed + h * 62.83);
+        }
         // Per-star random opacity — some stars are faint, some vivid
         float opacity = 0.3 + 0.7 * hash(nc * 3.1 + seed + 77.0);
         float starBright = mix(brightMin, brightMax, h2) * twinkle * opacity;
@@ -137,7 +144,7 @@ const FRAGMENT = `
     vec2 p = nUV * freq + seedOff;
 
     // Single warp pass — organic flowing distortion
-    float wt = t * 1.2;
+    float wt = t * 4.0;
     vec2 warp = vec2(
       fbmLow(p + vec2(wt * 0.6, -wt * 0.4) + 10.0),
       fbmLow(p + vec2(-wt * 0.5, wt * 0.7) + 20.0)
@@ -148,13 +155,13 @@ const FRAGMENT = `
     float breath = 0.75 + 0.25 * sin(uTime * breathSpeed + breathPhase);
 
     // Noise-modulated edge: breaks the perfect circle into wispy, irregular shapes
-    float edgeNoise = fbmLow(nUV * 3.0 + seedOff * 0.1 + vec2(t * 0.4, t * 0.3));
+    float edgeNoise = fbmLow(nUV * 3.0 + seedOff * 0.1 + vec2(t * 1.5, t * 1.2));
     float dist = length(nUV);
     float noisyRadius = falloffRadius * (0.6 + 0.8 * edgeNoise);
     float mask = smoothstep(noisyRadius, noisyRadius * 0.15, dist);
 
     // Additional density variation — some parts of the cloud are thinner
-    float densityVar = 0.5 + 0.5 * fbmLow(nUV * 2.0 + seedOff * 0.3 + vec2(t * 0.2));
+    float densityVar = 0.5 + 0.5 * fbmLow(nUV * 2.0 + seedOff * 0.3 + vec2(t * 1.0));
     
     return tint * n * intensity * breath * mask * densityVar;
   }
@@ -169,11 +176,11 @@ const FRAGMENT = `
 
     // ── Parallax UVs — 7 depth levels ───────────────────────────
     // Back-to-front: deepNeb → bgStars → midNeb → midStars → nearNeb → nearStars → accentStars
-    vec2 uvDeepNeb  = uv + uMouse * 0.002;
+    vec2 uvDeepNeb  = uv + uMouse * 0.005;
     vec2 uvBg       = uv + uMouse * 0.007;
-    vec2 uvMidNeb   = uv + uMouse * 0.02;
+    vec2 uvMidNeb   = uv + uMouse * 0.025;
     vec2 uvMid      = uv + uMouse * 0.03;
-    vec2 uvNearNeb  = uv + uMouse * 0.05;
+    vec2 uvNearNeb  = uv + uMouse * 0.055;
     vec2 uvNear     = uv + uMouse * 0.07;
     vec2 uvAccent   = uv + uMouse * 0.10;
 
