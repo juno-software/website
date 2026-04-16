@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useRef } from 'react';
+import {Application, Mesh, MeshGeometry, Shader} from "pixi.js";
 
 /* ────────────────────────────────────────────────────────────────────
  *  Full-screen galaxy shader — rendered as a single Mesh quad with a
@@ -264,15 +265,14 @@ export default function GalaxyCanvas() {
   useEffect(() => {
     if (!containerRef.current) return;
 
-    let app: import('pixi.js').Application | null = null;
+    let app: Application | null = null;
     let destroyed = false;
     let cleanup: (() => void) | undefined;
 
     const init = async () => {
-      const PIXI = await import('pixi.js');
       if (destroyed) return;
 
-      app = new PIXI.Application();
+      app = new Application();
       const dpr = Math.min(window.devicePixelRatio || 1, 1.5); // cap resolution for performance
 
       await app.init({
@@ -297,7 +297,7 @@ export default function GalaxyCanvas() {
       const w = app.screen.width;
       const h = app.screen.height;
 
-      const geometry = new PIXI.MeshGeometry({
+      const geometry = new MeshGeometry({
         positions: new Float32Array([
           0, 0,
           w, 0,
@@ -313,7 +313,7 @@ export default function GalaxyCanvas() {
         indices: new Uint32Array([0, 1, 2, 0, 2, 3]),
       });
 
-      const shader = PIXI.Shader.from({
+      const shader = Shader.from({
         gl: {
           vertex: VERTEX,
           fragment: FRAGMENT,
@@ -327,7 +327,7 @@ export default function GalaxyCanvas() {
         },
       });
 
-      const mesh = new PIXI.Mesh({ geometry, shader });
+      const mesh = new Mesh({ geometry, shader });
       app.stage.addChild(mesh);
 
       // ── Mouse tracking via PixiJS event system ─────────────────
@@ -383,7 +383,7 @@ export default function GalaxyCanvas() {
       };
     };
 
-    init();
+    init().catch(console.error);
 
     return () => {
       destroyed = true;
