@@ -145,25 +145,25 @@ const FRAGMENT = `
 
     vec2 p = nUV * freq + seedOff;
 
-    // Single warp pass — organic flowing distortion
-    float wt = t * 4.0;
+    // Single warp pass — gentle billowing distortion (slow wt keeps shapes cohesive, not smoky)
+    float wt = t * 1.2;
     vec2 warp = vec2(
       fbmLow(p + vec2(wt * 0.6, -wt * 0.4) + 10.0),
       fbmLow(p + vec2(-wt * 0.5, wt * 0.7) + 20.0)
     );
 
-    float n = fbm(p + warp * 2.2);
+    float n = fbm(p + warp * 0.9);
 
     float breath = 0.75 + 0.25 * sin(uTime * breathSpeed + breathPhase);
 
-    // Noise-modulated edge: breaks the perfect circle into wispy, irregular shapes
-    float edgeNoise = fbmLow(nUV * 3.0 + seedOff * 0.1 + vec2(t * 1.5, t * 1.2));
+    // Noise-modulated edge: gently rounded, not wispy
+    float edgeNoise = fbmLow(nUV * 3.0 + seedOff * 0.1 + vec2(t * 0.4, t * 0.3));
     float dist = length(nUV);
-    float noisyRadius = falloffRadius * (0.6 + 0.8 * edgeNoise);
+    float noisyRadius = falloffRadius * (0.7 + 0.5 * edgeNoise);
     float mask = smoothstep(noisyRadius, noisyRadius * 0.15, dist);
 
-    // Additional density variation — some parts of the cloud are thinner
-    float densityVar = 0.5 + 0.5 * fbmLow(nUV * 2.0 + seedOff * 0.3 + vec2(t * 1.0));
+    // Additional density variation — slow drift keeps internal structure stable
+    float densityVar = 0.5 + 0.5 * fbmLow(nUV * 2.0 + seedOff * 0.3 + vec2(t * 0.25));
     
     return tint * n * intensity * breath * mask * densityVar;
   }
