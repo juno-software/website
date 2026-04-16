@@ -330,15 +330,16 @@ export default function GalaxyCanvas() {
       const mesh = new PIXI.Mesh({ geometry, shader });
       app.stage.addChild(mesh);
 
-      // ── Mouse tracking ─────────────────────────────────────────
+      // ── Mouse tracking via PixiJS event system ─────────────────
       const mouse  = { x: 0, y: 0 };
       const smooth = { x: 0, y: 0 };
 
-      const onMouseMove = (e: MouseEvent) => {
-        mouse.x = (e.clientX / window.innerWidth  - 0.5) * 2;
-        mouse.y = (e.clientY / window.innerHeight - 0.5) * 2;
-      };
-      window.addEventListener('mousemove', onMouseMove);
+      app.stage.eventMode = 'static';
+      app.stage.hitArea = app.screen;
+      app.stage.on('globalpointermove', (e: import('pixi.js').FederatedPointerEvent) => {
+        mouse.x = (e.global.x / app!.screen.width  - 0.5) * 2;
+        mouse.y = (e.global.y / app!.screen.height - 0.5) * 2;
+      });
 
       // ── Resize ─────────────────────────────────────────────────
       const onResize = () => {
@@ -378,7 +379,6 @@ export default function GalaxyCanvas() {
       });
 
       cleanup = () => {
-        window.removeEventListener('mousemove', onMouseMove);
         window.removeEventListener('resize', onResize);
       };
     };
@@ -399,7 +399,7 @@ export default function GalaxyCanvas() {
     <div
       ref={containerRef}
       className="absolute inset-0"
-      style={{ pointerEvents: 'none', zIndex: 0 }}
+      style={{ pointerEvents: 'auto', zIndex: 0 }}
     />
   );
 }
