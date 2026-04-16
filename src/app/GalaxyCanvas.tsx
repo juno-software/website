@@ -179,12 +179,12 @@ const FRAGMENT = `
     // ── Parallax UVs — 7 depth levels ───────────────────────────
     // Back-to-front: deepNeb → bgStars → midNeb → midStars → nearNeb → nearStars → accentStars
     vec2 uvDeepNeb  = uv + uMouse * 0.005;
-    vec2 uvBg       = uv + uMouse * 0.007;
+    vec2 uvBg       = uv + uMouse * 0.003;
     vec2 uvMidNeb   = uv + uMouse * 0.025;
-    vec2 uvMid      = uv + uMouse * 0.03;
+    vec2 uvMid      = uv + uMouse * 0.012;
     vec2 uvNearNeb  = uv + uMouse * 0.055;
-    vec2 uvNear     = uv + uMouse * 0.07;
-    vec2 uvAccent   = uv + uMouse * 0.10;
+    vec2 uvNear     = uv + uMouse * 0.025;
+    vec2 uvAccent   = uv + uMouse * 0.038;
 
     vec3 col = vec3(0.0);
     float orbit = uTime * 0.0018;
