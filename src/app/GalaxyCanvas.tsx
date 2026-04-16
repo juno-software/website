@@ -99,8 +99,7 @@ const FRAGMENT = `
     for (int dx = -1; dx <= 1; dx++) {
       for (int dy = -1; dy <= 1; dy++) {
         vec2 nc = cell + vec2(float(dx), float(dy));
-        float h  = hash(nc + seed);
-        float h2 = hash2(nc + seed);
+        float h = hash(nc + seed);
         if (h < threshold) continue;
 
         vec2 starOff = vec2(hash(nc * 1.3 + seed), hash(nc * 2.7 + seed + 41.0));
@@ -111,21 +110,26 @@ const FRAGMENT = `
         float ang  = atan(diff.y, diff.x) + orbit / (1.0 + dist * 0.003);
         starPx = gcPx + vec2(cos(ang), sin(ang)) * dist;
 
-        float d = length(pxUV - starPx);
+        // Squared-distance early exit — skips twinkle sin() and exp() for pixels far from this star
+        vec2 toStar = pxUV - starPx;
+        float d2 = dot(toStar, toStar);
+        if (d2 > radiusPx * radiusPx * 9.0) continue; // beyond 3× radius, glow is negligible
+
+        float h2 = hash2(nc + seed);
+        float d = sqrt(d2);
 
         // Per-star twinkle: ~30% don't blink, rest have varied speed & amplitude
         float twinkleType = hash(nc * 5.7 + seed + 99.0);
         float twinkle = 1.0;
         if (twinkleType > 0.3) {
-          float speed = 0.5 + twinkleType * 4.0;       // 0.5 – 4.5 range
-          float amplitude = 0.1 + 0.4 * (twinkleType - 0.3) / 0.7;  // 0.1 – 0.5
+          float speed = 0.5 + twinkleType * 4.0;
+          float amplitude = 0.1 + 0.4 * (twinkleType - 0.3) / 0.7;
           twinkle = 1.0 - amplitude + amplitude * sin(uTime * speed + h * 62.83);
         }
-        // Per-star random opacity — some stars are faint, some vivid
         float opacity = 0.3 + 0.7 * hash(nc * 3.1 + seed + 77.0);
         float starBright = mix(brightMin, brightMax, h2) * twinkle * opacity;
 
-        float glow = starBright * exp(-d * d / (radiusPx * radiusPx * 0.5));
+        float glow = starBright * exp(-d2 / (radiusPx * radiusPx * 0.5));
         bright += glow;
       }
     }
@@ -134,14 +138,12 @@ const FRAGMENT = `
 
   // ─── Nebula layer helper ───────────────────────────────────────
   // Each cloud has its own center, stretch, and noise-eroded edges.
-  vec3 nebulaLayer(vec2 uvP, vec2 center, float aspect, float t,
+  vec3 nebulaLayer(vec2 uvP, vec2 center, float aspect, mat2 nebulaRot, float t,
                    float freq, vec2 seedOff, vec3 tint,
                    float intensity, float breathSpeed, float breathPhase,
                    float falloffRadius, vec2 stretch) {
     vec2 nUV = (uvP - center) * vec2(aspect, 1.0) * stretch;
-    float ra = t * 0.08;
-    mat2 rot = mat2(cos(ra), -sin(ra), sin(ra), cos(ra));
-    nUV = rot * nUV;
+    nUV = nebulaRot * nUV;
 
     vec2 p = nUV * freq + seedOff;
 
@@ -176,6 +178,11 @@ const FRAGMENT = `
     float t = uTime * 0.007;
     float dGC = length((uv - galCenter) * vec2(aspect, 1.0));
 
+    // Precompute nebula rotation once — same angle for all 9 layers, saves 16 sin/cos per pixel
+    float ra = t * 0.08;
+    float raCos = cos(ra), raSin = sin(ra);
+    mat2 nebulaRot = mat2(raCos, -raSin, raSin, raCos);
+
     // ── Parallax UVs — 7 depth levels ───────────────────────────
     // Back-to-front: deepNeb → bgStars → midNeb → midStars → nearNeb → nearStars → accentStars
     vec2 uvDeepNeb  = uv + uMouse * 0.005;
@@ -192,12 +199,12 @@ const FRAGMENT = `
     // ════════════════════════════════════════════════════════════
     // DEPTH 1 — Deep nebula (furthest back)
     // ════════════════════════════════════════════════════════════
-    col += nebulaLayer(uvDeepNeb, vec2(0.28, 0.35), aspect, t,
-      4.0, vec2(0.0),  vec3(0.12, 0.04, 0.32), 0.80, 0.0075, 0.0, 0.95, vec2(1.0, 1.4));   // deep violet — upper left
-    col += nebulaLayer(uvDeepNeb, vec2(0.70, 0.62), aspect, t,
-      5.0, vec2(50.0), vec3(0.06, 0.10, 0.35), 0.75, 0.009, 1.5, 1.0, vec2(1.5, 0.8));     // navy blue — lower right
-    col += nebulaLayer(uvDeepNeb, vec2(0.25, 0.60), aspect, t,
-      3.8, vec2(70.0), vec3(0.22, 0.04, 0.28), 0.55, 0.008, 0.8, 0.80, vec2(1.2, 1.0));    // rich purple — far left
+    col += nebulaLayer(uvDeepNeb, vec2(0.28, 0.35), aspect, nebulaRot, t,
+      4.0, vec2(0.0),  vec3(0.12, 0.04, 0.32), 0.80, 0.0075, 0.0, 0.95, vec2(1.0, 1.4));
+    col += nebulaLayer(uvDeepNeb, vec2(0.70, 0.62), aspect, nebulaRot, t,
+      5.0, vec2(50.0), vec3(0.06, 0.10, 0.35), 0.75, 0.009, 1.5, 1.0, vec2(1.5, 0.8));
+    col += nebulaLayer(uvDeepNeb, vec2(0.25, 0.60), aspect, nebulaRot, t,
+      3.8, vec2(70.0), vec3(0.22, 0.04, 0.28), 0.55, 0.008, 0.8, 0.80, vec2(1.2, 1.0));
 
     // Galactic core glow — warm purple-pink
     float coreGlow = exp(-dGC * dGC * 8.0) * 0.45;
@@ -214,12 +221,12 @@ const FRAGMENT = `
     // ════════════════════════════════════════════════════════════
     // DEPTH 3 — Mid nebula (partially obscures bg stars)
     // ════════════════════════════════════════════════════════════
-    col += nebulaLayer(uvMidNeb, vec2(0.68, 0.30), aspect, t,
-      5.5, vec2(100.0), vec3(0.18, 0.05, 0.30), 0.50, 0.006, 3.0, 0.75, vec2(0.9, 1.3));   // plum — upper right
-    col += nebulaLayer(uvMidNeb, vec2(0.30, 0.68), aspect, t,
-      4.2, vec2(150.0), vec3(0.08, 0.12, 0.30), 0.45, 0.007, 2.0, 0.85, vec2(1.6, 0.7));   // royal blue — lower left
-    col += nebulaLayer(uvMidNeb, vec2(0.76, 0.50), aspect, t,
-      4.8, vec2(170.0), vec3(0.30, 0.06, 0.24), 0.35, 0.0065, 2.5, 0.70, vec2(1.0, 1.1));  // magenta — far right
+    col += nebulaLayer(uvMidNeb, vec2(0.68, 0.30), aspect, nebulaRot, t,
+      5.5, vec2(100.0), vec3(0.18, 0.05, 0.30), 0.50, 0.006, 3.0, 0.75, vec2(0.9, 1.3));
+    col += nebulaLayer(uvMidNeb, vec2(0.30, 0.68), aspect, nebulaRot, t,
+      4.2, vec2(150.0), vec3(0.08, 0.12, 0.30), 0.45, 0.007, 2.0, 0.85, vec2(1.6, 0.7));
+    col += nebulaLayer(uvMidNeb, vec2(0.76, 0.50), aspect, nebulaRot, t,
+      4.8, vec2(170.0), vec3(0.30, 0.06, 0.24), 0.35, 0.0065, 2.5, 0.70, vec2(1.0, 1.1));
 
     // ════════════════════════════════════════════════════════════
     // DEPTH 4 — Mid-field stars (moderate, fewer)
@@ -230,12 +237,12 @@ const FRAGMENT = `
     // ════════════════════════════════════════════════════════════
     // DEPTH 5 — Near nebula wisps (foreground haze over mid stars)
     // ════════════════════════════════════════════════════════════
-    col += nebulaLayer(uvNearNeb, vec2(0.50, 0.18), aspect, t,
-      6.0, vec2(200.0), vec3(0.25, 0.08, 0.32), 0.35, 0.008, 4.5, 0.65, vec2(1.3, 0.8));   // bright purple — top center
-    col += nebulaLayer(uvNearNeb, vec2(0.20, 0.50), aspect, t,
-      3.5, vec2(250.0), vec3(0.32, 0.10, 0.28), 0.28, 0.005, 5.5, 0.70, vec2(0.8, 1.5));   // hot pink — far left
-    col += nebulaLayer(uvNearNeb, vec2(0.76, 0.74), aspect, t,
-      5.2, vec2(280.0), vec3(0.10, 0.14, 0.34), 0.30, 0.007, 5.0, 0.68, vec2(1.4, 0.9));   // cerulean — far lower right
+    col += nebulaLayer(uvNearNeb, vec2(0.50, 0.18), aspect, nebulaRot, t,
+      6.0, vec2(200.0), vec3(0.25, 0.08, 0.32), 0.35, 0.008, 4.5, 0.65, vec2(1.3, 0.8));
+    col += nebulaLayer(uvNearNeb, vec2(0.20, 0.50), aspect, nebulaRot, t,
+      3.5, vec2(250.0), vec3(0.32, 0.10, 0.28), 0.28, 0.005, 5.5, 0.70, vec2(0.8, 1.5));
+    col += nebulaLayer(uvNearNeb, vec2(0.76, 0.74), aspect, nebulaRot, t,
+      5.2, vec2(280.0), vec3(0.10, 0.14, 0.34), 0.30, 0.007, 5.0, 0.68, vec2(1.4, 0.9));
 
     // ════════════════════════════════════════════════════════════
     // DEPTH 6 — Near bright stars (sparse, warm/cool tinted)
@@ -365,6 +372,9 @@ function doRender(containerRef: RefObject<HTMLDivElement | null>) {
 
         // ── Animation loop ─────────────────────────────────────────
         let time = 0;
+
+        // Cap at 60fps — animation is slow/subtle; no benefit from higher refresh rates
+        app.ticker.maxFPS = 60;
 
         // Pause rendering when the tab is hidden — saves GPU/CPU on inactive tabs
         const onVisibilityChange = () => {
