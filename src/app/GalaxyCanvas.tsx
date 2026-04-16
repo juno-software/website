@@ -32,6 +32,7 @@ const FRAGMENT = `
   uniform float uTime;
   uniform vec2  uResolution;
   uniform vec2  uMouse;
+  uniform vec2  uMouseVelocity;
 
   // ─── Gradient noise (no grid artifacts) ────────────────────────
   vec2 grad(vec2 p) {
@@ -88,11 +89,21 @@ const FRAGMENT = `
   // 'threshold' controls density: higher = fewer stars
   float starLayer(vec2 uv, float cellSize, float brightMin, float brightMax,
                   float radiusPx, float orbit, vec2 galCenter, float seed,
-                  float threshold) {
+                  float threshold, float parallaxScale) {
     vec2 pxUV = uv * uResolution;
     vec2 gcPx = galCenter * uResolution;
-
     vec2 cell = floor(pxUV / cellSize);
+
+    // Motion blur axis — velocity of this layer in pixel space
+    vec2 vel     = uMouseVelocity * parallaxScale * uResolution;
+    float velLen = length(vel);
+    vec2 velDir  = velLen > 0.5 ? vel / velLen : vec2(1.0, 0.0);
+    vec2 velPerp = vec2(-velDir.y, velDir.x);
+
+    // Blur sigma stretches along motion; cap so stars don't become infinite streaks
+    float blurSigma = min(radiusPx + velLen * 0.4, radiusPx * 10.0);
+    // Expand early-exit radius to cover the elongated blur footprint
+    float exitRadius2 = blurSigma * blurSigma * 9.0;
 
     float bright = 0.0;
 
@@ -110,15 +121,12 @@ const FRAGMENT = `
         float ang  = atan(diff.y, diff.x) + orbit / (1.0 + dist * 0.003);
         starPx = gcPx + vec2(cos(ang), sin(ang)) * dist;
 
-        // Squared-distance early exit — skips twinkle sin() and exp() for pixels far from this star
         vec2 toStar = pxUV - starPx;
         float d2 = dot(toStar, toStar);
-        if (d2 > radiusPx * radiusPx * 9.0) continue; // beyond 3× radius, glow is negligible
+        if (d2 > exitRadius2) continue;
 
         float h2 = hash2(nc + seed);
-        float d = sqrt(d2);
 
-        // Per-star twinkle: ~30% don't blink, rest have varied speed & amplitude
         float twinkleType = hash(nc * 5.7 + seed + 99.0);
         float twinkle = 1.0;
         if (twinkleType > 0.3) {
@@ -129,7 +137,13 @@ const FRAGMENT = `
         float opacity = 0.3 + 0.7 * hash(nc * 3.1 + seed + 77.0);
         float starBright = mix(brightMin, brightMax, h2) * twinkle * opacity;
 
-        float glow = starBright * exp(-d2 / (radiusPx * radiusPx * 0.5));
+        // Anisotropic gaussian: wide along motion axis, tight perpendicular to it
+        float along = dot(toStar, velDir);
+        float perp  = dot(toStar, velPerp);
+        float glow = starBright * exp(
+          -along * along / (blurSigma  * blurSigma  * 0.5)
+          -perp  * perp  / (radiusPx   * radiusPx   * 0.5)
+        );
         bright += glow;
       }
     }
@@ -214,7 +228,7 @@ const FRAGMENT = `
     // ════════════════════════════════════════════════════════════
     // DEPTH 2 — Background stars (distant dust, sparse)
     // ════════════════════════════════════════════════════════════
-    float bgStars = starLayer(uvBg, 12.0, 0.10, 0.55, 0.3, orbit, galCenter, 0.0, 0.80);
+    float bgStars = starLayer(uvBg, 12.0, 0.10, 0.55, 0.3, orbit, galCenter, 0.0, 0.80, 0.003);
     bgStars *= mix(1.0, 0.12, smoothstep(0.0, 0.6, dGC));
     col += vec3(0.82, 0.85, 0.95) * bgStars;
 
@@ -231,7 +245,7 @@ const FRAGMENT = `
     // ════════════════════════════════════════════════════════════
     // DEPTH 4 — Mid-field stars (moderate, fewer)
     // ════════════════════════════════════════════════════════════
-    float midStars = starLayer(uvMid, 30.0, 0.30, 0.75, 0.7, orbit * 0.7, galCenter, 200.0, 0.82);
+    float midStars = starLayer(uvMid, 30.0, 0.30, 0.75, 0.7, orbit * 0.7, galCenter, 200.0, 0.82, 0.012);
     col += vec3(0.88, 0.90, 1.0) * midStars;
 
     // ════════════════════════════════════════════════════════════
@@ -247,7 +261,7 @@ const FRAGMENT = `
     // ════════════════════════════════════════════════════════════
     // DEPTH 6 — Near bright stars (sparse, warm/cool tinted)
     // ════════════════════════════════════════════════════════════
-    float nearStars = starLayer(uvNear, 50.0, 0.50, 0.95, 1.4, orbit * 0.4, galCenter, 400.0, 0.85);
+    float nearStars = starLayer(uvNear, 50.0, 0.50, 0.95, 1.4, orbit * 0.4, galCenter, 400.0, 0.85, 0.025);
     vec2 nCell = floor(uvNear * uResolution / 35.0);
     float tintVal = hash(nCell + 400.0);
     vec3 starCol = tintVal < 0.15 ? vec3(1.0, 0.96, 0.88) : vec3(0.92, 0.94, 1.0);
@@ -256,7 +270,7 @@ const FRAGMENT = `
     // ════════════════════════════════════════════════════════════
     // DEPTH 7 — Foreground accent glow stars (very few, biggest shift)
     // ════════════════════════════════════════════════════════════
-    float accentStars = starLayer(uvAccent, 100.0, 0.70, 1.0, 3.0, orbit * 0.3, galCenter, 600.0, 0.88);
+    float accentStars = starLayer(uvAccent, 100.0, 0.70, 1.0, 3.0, orbit * 0.3, galCenter, 600.0, 0.88, 0.038);
     vec2 aCell = floor(uvAccent * uResolution / 70.0);
     float aTint = hash(aCell + 600.0);
     vec3 accentCol = aTint < 0.25 ? vec3(1.0, 0.96, 0.88) : vec3(0.87, 0.91, 1.0);
@@ -329,6 +343,7 @@ function doRender(containerRef: RefObject<HTMLDivElement | null>) {
                     uTime: {value: 0, type: 'f32'},
                     uResolution: {value: new Float32Array([w * dpr, h * dpr]), type: 'vec2<f32>'},
                     uMouse: {value: new Float32Array([0, 0]), type: 'vec2<f32>'},
+                    uMouseVelocity: {value: new Float32Array([0, 0]), type: 'vec2<f32>'},
                 },
             },
         });
@@ -384,19 +399,19 @@ function doRender(containerRef: RefObject<HTMLDivElement | null>) {
         document.addEventListener('visibilitychange', onVisibilityChange);
 
         app.ticker.add(() => {
-            // Use deltaTime so animation speed is frame-rate independent
-            // (deltaTime ≈ 1.0 at 60 fps, 0.5 at 120 fps, 2.0 at 30 fps)
             const dt = app!.ticker.deltaTime;
             time += dt;
 
-            // Frame-rate independent exponential smoothing: equivalent to 0.055 factor at 60 fps
             const factor = 1 - Math.pow(0.945, dt);
+            const prevX = smooth.x, prevY = smooth.y;
             smooth.x += (mouse.x - smooth.x) * factor;
             smooth.y += (mouse.y - smooth.y) * factor;
 
             uniforms.uTime = time;
             uniforms.uMouse[0] = smooth.x;
             uniforms.uMouse[1] = smooth.y;
+            uniforms.uMouseVelocity[0] = smooth.x - prevX;
+            uniforms.uMouseVelocity[1] = smooth.y - prevY;
         });
 
         cleanup = () => {
