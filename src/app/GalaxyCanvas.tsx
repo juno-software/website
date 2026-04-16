@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef } from 'react';
+import {RefObject, useEffect, useRef} from 'react';
 import {Application, Mesh, MeshGeometry, Shader} from "pixi.js";
 
 /* ────────────────────────────────────────────────────────────────────
@@ -259,147 +259,154 @@ const FRAGMENT = `
   }
 `;
 
-export default function GalaxyCanvas() {
-  const containerRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!containerRef.current) return;
-
+function doRender(containerRef: RefObject<HTMLDivElement | null>) {
     let app: Application | null = null;
     let destroyed = false;
     let cleanup: (() => void) | undefined;
 
     const init = async () => {
-      if (destroyed) return;
+        if (destroyed) return;
 
-      app = new Application();
-      const dpr = Math.min(window.devicePixelRatio || 1, 1.5); // cap resolution for performance
+        app = new Application();
+        const dpr = Math.min(window.devicePixelRatio || 1, 1.5); // cap resolution for performance
 
-      await app.init({
-        resizeTo: window,
-        backgroundAlpha: 0,
-        antialias: false,
-        resolution: dpr,
-        autoDensity: true,
-      });
+        await app.init({
+            resizeTo: window,
+            backgroundAlpha: 0,
+            antialias: false,
+            resolution: dpr,
+            autoDensity: true,
+        });
 
-      if (destroyed) { app.destroy(true); return; }
+        if (destroyed) {
+            app.destroy(true);
+            return;
+        }
 
-      const canvas = app.canvas as HTMLCanvasElement;
-      canvas.style.position = 'absolute';
-      canvas.style.inset = '0';
-      canvas.style.width = '100%';
-      canvas.style.height = '100%';
-      containerRef.current!.appendChild(canvas);
+        const canvas = app.canvas as HTMLCanvasElement;
+        canvas.style.position = 'absolute';
+        canvas.style.inset = '0';
+        canvas.style.width = '100%';
+        canvas.style.height = '100%';
+        containerRef.current!.appendChild(canvas);
 
-      // ── Full-screen quad as a Mesh ──────────────────────────────
-      // Two triangles covering the screen, with UVs from (0,0) to (1,1).
-      const w = app.screen.width;
-      const h = app.screen.height;
+        // ── Full-screen quad as a Mesh ──────────────────────────────
+        // Two triangles covering the screen, with UVs from (0,0) to (1,1).
+        const w = app.screen.width;
+        const h = app.screen.height;
 
-      const geometry = new MeshGeometry({
-        positions: new Float32Array([
-          0, 0,
-          w, 0,
-          w, h,
-          0, h,
-        ]),
-        uvs: new Float32Array([
-          0, 0,
-          1, 0,
-          1, 1,
-          0, 1,
-        ]),
-        indices: new Uint32Array([0, 1, 2, 0, 2, 3]),
-      });
+        const geometry = new MeshGeometry({
+            positions: new Float32Array([
+                0, 0,
+                w, 0,
+                w, h,
+                0, h,
+            ]),
+            uvs: new Float32Array([
+                0, 0,
+                1, 0,
+                1, 1,
+                0, 1,
+            ]),
+            indices: new Uint32Array([0, 1, 2, 0, 2, 3]),
+        });
 
-      const shader = Shader.from({
-        gl: {
-          vertex: VERTEX,
-          fragment: FRAGMENT,
-        },
-        resources: {
-          galaxyUniforms: {
-            uTime:       { value: 0, type: 'f32' },
-            uResolution: { value: new Float32Array([w * dpr, h * dpr]), type: 'vec2<f32>' },
-            uMouse:      { value: new Float32Array([0, 0]), type: 'vec2<f32>' },
-          },
-        },
-      });
+        const shader = Shader.from({
+            gl: {
+                vertex: VERTEX,
+                fragment: FRAGMENT,
+            },
+            resources: {
+                galaxyUniforms: {
+                    uTime: {value: 0, type: 'f32'},
+                    uResolution: {value: new Float32Array([w * dpr, h * dpr]), type: 'vec2<f32>'},
+                    uMouse: {value: new Float32Array([0, 0]), type: 'vec2<f32>'},
+                },
+            },
+        });
 
-      const mesh = new Mesh({ geometry, shader });
-      app.stage.addChild(mesh);
+        const mesh = new Mesh({geometry, shader});
+        app.stage.addChild(mesh);
 
-      // ── Mouse tracking via PixiJS event system ─────────────────
-      const mouse  = { x: 0, y: 0 };
-      const smooth = { x: 0, y: 0 };
+        // ── Mouse tracking via PixiJS event system ─────────────────
+        const mouse = {x: 0, y: 0};
+        const smooth = {x: 0, y: 0};
 
-      app.stage.eventMode = 'static';
-      app.stage.hitArea = app.screen;
-      app.stage.on('globalpointermove', (e: import('pixi.js').FederatedPointerEvent) => {
-        mouse.x = (e.global.x / app!.screen.width  - 0.5) * 2;
-        mouse.y = (e.global.y / app!.screen.height - 0.5) * 2;
-      });
+        app.stage.eventMode = 'static';
+        app.stage.hitArea = app.screen;
+        app.stage.on('globalpointermove', (e: import('pixi.js').FederatedPointerEvent) => {
+            mouse.x = (e.global.x / app!.screen.width - 0.5) * 2;
+            mouse.y = (e.global.y / app!.screen.height - 0.5) * 2;
+        });
 
-      // ── Resize ─────────────────────────────────────────────────
-      const onResize = () => {
-        if (!app) return;
-        const curDpr = Math.min(window.devicePixelRatio || 1, 1.5);
-        const nw = app.screen.width;
-        const nh = app.screen.height;
+        // ── Resize ─────────────────────────────────────────────────
+        const onResize = () => {
+            if (!app) return;
+            const curDpr = Math.min(window.devicePixelRatio || 1, 1.5);
+            const nw = app.screen.width;
+            const nh = app.screen.height;
 
-        // Update quad positions to cover new screen size
-        const pos = geometry.getAttribute('aPosition');
-        pos.buffer.data = new Float32Array([
-          0, 0,
-          nw, 0,
-          nw, nh,
-          0, nh,
-        ]);
-        pos.buffer.update();
+            // Update quad positions to cover new screen size
+            const pos = geometry.getAttribute('aPosition');
+            pos.buffer.data = new Float32Array([
+                0, 0,
+                nw, 0,
+                nw, nh,
+                0, nh,
+            ]);
+            pos.buffer.update();
 
-        const uniforms = shader.resources.galaxyUniforms.uniforms;
-        uniforms.uResolution[0] = nw * curDpr;
-        uniforms.uResolution[1] = nh * curDpr;
-      };
-      window.addEventListener('resize', onResize);
+            const uniforms = shader.resources.galaxyUniforms.uniforms;
+            uniforms.uResolution[0] = nw * curDpr;
+            uniforms.uResolution[1] = nh * curDpr;
+        };
+        window.addEventListener('resize', onResize);
 
-      // ── Animation loop ─────────────────────────────────────────
-      let time = 0;
+        // ── Animation loop ─────────────────────────────────────────
+        let time = 0;
 
-      app.ticker.add(() => {
-        time += 1;
-        smooth.x += (mouse.x - smooth.x) * 0.055;
-        smooth.y += (mouse.y - smooth.y) * 0.055;
+        app.ticker.add(() => {
+            time += 1;
+            smooth.x += (mouse.x - smooth.x) * 0.055;
+            smooth.y += (mouse.y - smooth.y) * 0.055;
 
-        const uniforms = shader.resources.galaxyUniforms.uniforms;
-        uniforms.uTime = time;
-        uniforms.uMouse[0] = smooth.x;
-        uniforms.uMouse[1] = smooth.y;
-      });
+            const uniforms = shader.resources.galaxyUniforms.uniforms;
+            uniforms.uTime = time;
+            uniforms.uMouse[0] = smooth.x;
+            uniforms.uMouse[1] = smooth.y;
+        });
 
-      cleanup = () => {
-        window.removeEventListener('resize', onResize);
-      };
+        cleanup = () => {
+            window.removeEventListener('resize', onResize);
+        };
     };
 
     init().catch(console.error);
 
     return () => {
-      destroyed = true;
-      cleanup?.();
-      if (app) {
-        app.destroy(true, { children: true });
-        app = null;
-      }
+        destroyed = true;
+        cleanup?.();
+        if (app) {
+            app.destroy(true, {children: true});
+            app = null;
+        }
     };
-  }, []);
+}
 
-  return (
-    <div
-      ref={containerRef}
-      className="absolute inset-0"
-      style={{ pointerEvents: 'auto', zIndex: 0 }}
-    />
-  );
+export default function GalaxyCanvas() {
+    const containerRef = useRef<HTMLDivElement>(null);
+
+    useEffect(() => {
+        if (!containerRef.current) return;
+
+        return doRender(containerRef);
+    }, []);
+
+    return (
+        <div
+            ref={containerRef}
+            className="absolute inset-0"
+            style={{pointerEvents: 'auto', zIndex: 0}}
+        />
+    );
 }
