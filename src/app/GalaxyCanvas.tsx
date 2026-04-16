@@ -2,6 +2,243 @@
 
 import { useEffect, useRef } from 'react';
 
+/* ────────────────────────────────────────────────────────────────────
+ *  Full-screen galaxy shader — rendered as a single Mesh quad with a
+ *  custom shader. No Filter overhead (no intermediate framebuffer).
+ * ──────────────────────────────────────────────────────────────────── */
+
+const VERTEX = `
+  in vec2 aPosition;
+  in vec2 aUV;
+  out vec2 vUV;
+
+  uniform mat3 uProjectionMatrix;
+  uniform mat3 uWorldTransformMatrix;
+
+  void main() {
+    mat3 mvp = uProjectionMatrix * uWorldTransformMatrix;
+    gl_Position = vec4((mvp * vec3(aPosition, 1.0)).xy, 0.0, 1.0);
+    vUV = aUV;
+  }
+`;
+
+const FRAGMENT = `
+  precision highp float;
+
+  in vec2 vUV;
+  out vec4 finalColor;
+
+  uniform float uTime;
+  uniform vec2  uResolution;
+  uniform vec2  uMouse;
+
+  // ─── Gradient noise (no grid artifacts) ────────────────────────
+  vec2 grad(vec2 p) {
+    p = vec2(dot(p, vec2(127.1, 311.7)),
+             dot(p, vec2(269.5, 183.3)));
+    return -1.0 + 2.0 * fract(sin(p) * 43758.5453123);
+  }
+
+  float gnoise(vec2 p) {
+    vec2 i = floor(p);
+    vec2 f = fract(p);
+    vec2 u = f * f * f * (f * (f * 6.0 - 15.0) + 10.0);
+    float a = dot(grad(i), f);
+    float b = dot(grad(i + vec2(1.0, 0.0)), f - vec2(1.0, 0.0));
+    float c = dot(grad(i + vec2(0.0, 1.0)), f - vec2(0.0, 1.0));
+    float d = dot(grad(i + vec2(1.0, 1.0)), f - vec2(1.0, 1.0));
+    return 0.5 + 0.5 * mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
+  }
+
+  // Cheap fBm for warp offsets (3 octaves — fast)
+  float fbmLow(vec2 p) {
+    float v = 0.0, a = 0.5;
+    mat2 rot = mat2(0.8, 0.6, -0.6, 0.8);
+    for (int i = 0; i < 3; i++) {
+      v += a * gnoise(p);
+      p = rot * p * 2.0;
+      a *= 0.5;
+    }
+    return v;
+  }
+
+  // Detail fBm for final sample (5 octaves)
+  float fbm(vec2 p) {
+    float v = 0.0, a = 0.5;
+    mat2 rot = mat2(0.8, 0.6, -0.6, 0.8);
+    for (int i = 0; i < 5; i++) {
+      v += a * gnoise(p);
+      p = rot * p * 2.0;
+      a *= 0.5;
+    }
+    return v;
+  }
+
+  // ─── Simple hash for star placement ────────────────────────────
+  float hash(vec2 p) {
+    return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123);
+  }
+  float hash2(vec2 p) {
+    return fract(sin(dot(p, vec2(269.5, 183.3))) * 43758.5453123);
+  }
+
+  // ─── Star layer ────────────────────────────────────────────────
+  // 'threshold' controls density: higher = fewer stars
+  float starLayer(vec2 uv, float cellSize, float brightMin, float brightMax,
+                  float radiusPx, float orbit, vec2 galCenter, float seed,
+                  float threshold) {
+    vec2 pxUV = uv * uResolution;
+    vec2 gcPx = galCenter * uResolution;
+
+    vec2 cell = floor(pxUV / cellSize);
+
+    float bright = 0.0;
+
+    for (int dx = -1; dx <= 1; dx++) {
+      for (int dy = -1; dy <= 1; dy++) {
+        vec2 nc = cell + vec2(float(dx), float(dy));
+        float h  = hash(nc + seed);
+        float h2 = hash2(nc + seed);
+        if (h < threshold) continue;
+
+        vec2 starOff = vec2(hash(nc * 1.3 + seed), hash(nc * 2.7 + seed + 41.0));
+        vec2 starPx  = (nc + starOff) * cellSize;
+
+        vec2 diff = starPx - gcPx;
+        float dist = length(diff);
+        float ang  = atan(diff.y, diff.x) + orbit / (1.0 + dist * 0.003);
+        starPx = gcPx + vec2(cos(ang), sin(ang)) * dist;
+
+        float d = length(pxUV - starPx);
+
+        float twinkle = 0.7 + 0.3 * sin(uTime * (1.5 + h2 * 3.0) + h * 62.83);
+        // Per-star random opacity — some stars are faint, some vivid
+        float opacity = 0.3 + 0.7 * hash(nc * 3.1 + seed + 77.0);
+        float starBright = mix(brightMin, brightMax, h2) * twinkle * opacity;
+
+        float glow = starBright * exp(-d * d / (radiusPx * radiusPx * 0.5));
+        bright += glow;
+      }
+    }
+    return bright;
+  }
+
+  // ─── Nebula layer helper ───────────────────────────────────────
+  // Single domain warp using cheap fbmLow, final sample with fbm.
+  // Total: 2×3 + 1×5 = 11 gnoise calls (was 5×7 = 35).
+  vec3 nebulaLayer(vec2 uvP, vec2 galCenter, float aspect, float t,
+                   float freq, vec2 seedOff, vec3 tint,
+                   float intensity, float breathSpeed, float breathPhase,
+                   float falloffRadius) {
+    vec2 nUV = (uvP - galCenter) * vec2(aspect, 1.0);
+    float ra = t * 0.08;
+    mat2 rot = mat2(cos(ra), -sin(ra), sin(ra), cos(ra));
+    nUV = rot * nUV;
+
+    vec2 p = nUV * freq + seedOff;
+
+    // Single warp pass using cheap noise — organic flowing distortion
+    float wt = t * 1.2;
+    vec2 warp = vec2(
+      fbmLow(p + vec2(wt * 0.6, -wt * 0.4) + 10.0),
+      fbmLow(p + vec2(-wt * 0.5, wt * 0.7) + 20.0)
+    );
+
+    float n = fbm(p + warp * 2.2);
+
+    float breath = 0.75 + 0.25 * sin(uTime * breathSpeed + breathPhase);
+    float dGC = length((uvP - galCenter) * vec2(aspect, 1.0));
+    float mask = smoothstep(falloffRadius, 0.0, dGC);
+
+    return tint * n * intensity * breath * mask;
+  }
+
+  // ─── Main ──────────────────────────────────────────────────────
+  void main() {
+    vec2 uv = vUV;
+    float aspect = uResolution.x / uResolution.y;
+    vec2 galCenter = vec2(0.5, 0.48);
+    float t = uTime * 0.015;
+    float dGC = length((uv - galCenter) * vec2(aspect, 1.0));
+
+    // ── Parallax UVs — 7 depth levels ───────────────────────────
+    // Back-to-front: deepNeb → bgStars → midNeb → midStars → nearNeb → nearStars → accentStars
+    vec2 uvDeepNeb  = uv + uMouse * 0.002;
+    vec2 uvBg       = uv + uMouse * 0.007;
+    vec2 uvMidNeb   = uv + uMouse * 0.02;
+    vec2 uvMid      = uv + uMouse * 0.03;
+    vec2 uvNearNeb  = uv + uMouse * 0.05;
+    vec2 uvNear     = uv + uMouse * 0.07;
+    vec2 uvAccent   = uv + uMouse * 0.10;
+
+    vec3 col = vec3(0.0);
+    float orbit = uTime * 0.0018;
+
+    // ════════════════════════════════════════════════════════════
+    // DEPTH 1 — Deep nebula (furthest back)
+    // ════════════════════════════════════════════════════════════
+    col += nebulaLayer(uvDeepNeb, galCenter, aspect, t,
+      4.0, vec2(0.0),  vec3(0.176, 0.039, 0.306), 0.85, 0.0075, 0.0, 0.90);
+    col += nebulaLayer(uvDeepNeb, galCenter, aspect, t,
+      5.0, vec2(50.0), vec3(0.051, 0.106, 0.294), 0.80, 0.009, 1.5, 0.95);
+
+    // Galactic core glow (deep)
+    float coreGlow = exp(-dGC * dGC * 8.0) * 0.45;
+    float corePulse = 0.85 + 0.15 * sin(uTime * 0.008);
+    col += vec3(0.231, 0.122, 0.420) * coreGlow * corePulse;
+
+    // ════════════════════════════════════════════════════════════
+    // DEPTH 2 — Background stars (distant dust, sparse)
+    // ════════════════════════════════════════════════════════════
+    float bgStars = starLayer(uvBg, 12.0, 0.10, 0.55, 0.3, orbit, galCenter, 0.0, 0.80);
+    bgStars *= mix(1.0, 0.12, smoothstep(0.0, 0.6, dGC));
+    col += vec3(0.82, 0.85, 0.95) * bgStars;
+
+    // ════════════════════════════════════════════════════════════
+    // DEPTH 3 — Mid nebula (partially obscures bg stars)
+    // ════════════════════════════════════════════════════════════
+    col += nebulaLayer(uvMidNeb, galCenter, aspect, t,
+      5.5, vec2(100.0), vec3(0.102, 0.039, 0.239), 0.55, 0.006, 3.0, 0.80);
+    col += nebulaLayer(uvMidNeb, galCenter, aspect, t,
+      4.2, vec2(150.0), vec3(0.039, 0.086, 0.157), 0.50, 0.007, 2.0, 0.85);
+
+    // ════════════════════════════════════════════════════════════
+    // DEPTH 4 — Mid-field stars (moderate, fewer)
+    // ════════════════════════════════════════════════════════════
+    float midStars = starLayer(uvMid, 30.0, 0.30, 0.75, 0.7, orbit * 0.7, galCenter, 200.0, 0.82);
+    col += vec3(0.88, 0.90, 1.0) * midStars;
+
+    // ════════════════════════════════════════════════════════════
+    // DEPTH 5 — Near nebula wisps (foreground haze over mid stars)
+    // ════════════════════════════════════════════════════════════
+    col += nebulaLayer(uvNearNeb, galCenter, aspect, t,
+      6.0, vec2(200.0), vec3(0.125, 0.031, 0.220), 0.40, 0.008, 4.5, 0.70);
+    col += nebulaLayer(uvNearNeb, galCenter, aspect, t,
+      3.5, vec2(250.0), vec3(0.055, 0.043, 0.180), 0.35, 0.005, 5.5, 0.75);
+
+    // ════════════════════════════════════════════════════════════
+    // DEPTH 6 — Near bright stars (sparse, warm/cool tinted)
+    // ════════════════════════════════════════════════════════════
+    float nearStars = starLayer(uvNear, 50.0, 0.50, 0.95, 1.4, orbit * 0.4, galCenter, 400.0, 0.85);
+    vec2 nCell = floor(uvNear * uResolution / 35.0);
+    float tintVal = hash(nCell + 400.0);
+    vec3 starCol = tintVal < 0.15 ? vec3(1.0, 0.96, 0.88) : vec3(0.92, 0.94, 1.0);
+    col += starCol * nearStars;
+
+    // ════════════════════════════════════════════════════════════
+    // DEPTH 7 — Foreground accent glow stars (very few, biggest shift)
+    // ════════════════════════════════════════════════════════════
+    float accentStars = starLayer(uvAccent, 100.0, 0.70, 1.0, 3.0, orbit * 0.3, galCenter, 600.0, 0.88);
+    vec2 aCell = floor(uvAccent * uResolution / 70.0);
+    float aTint = hash(aCell + 600.0);
+    vec3 accentCol = aTint < 0.25 ? vec3(1.0, 0.96, 0.88) : vec3(0.87, 0.91, 1.0);
+    col += accentCol * accentStars * 1.1;
+
+    col = min(col, vec3(1.0));
+    finalColor = vec4(col, 1.0);
+  }
+`;
+
 export default function GalaxyCanvas() {
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -10,28 +247,24 @@ export default function GalaxyCanvas() {
 
     let app: import('pixi.js').Application | null = null;
     let destroyed = false;
-
     let cleanup: (() => void) | undefined;
 
     const init = async () => {
       const PIXI = await import('pixi.js');
-
       if (destroyed) return;
 
       app = new PIXI.Application();
+      const dpr = Math.min(window.devicePixelRatio || 1, 1.5); // cap resolution for performance
 
       await app.init({
         resizeTo: window,
         backgroundAlpha: 0,
-        antialias: true,
-        resolution: window.devicePixelRatio || 1,
+        antialias: false,
+        resolution: dpr,
         autoDensity: true,
       });
 
-      if (destroyed) {
-        app.destroy(true);
-        return;
-      }
+      if (destroyed) { app.destroy(true); return; }
 
       const canvas = app.canvas as HTMLCanvasElement;
       canvas.style.position = 'absolute';
@@ -40,193 +273,47 @@ export default function GalaxyCanvas() {
       canvas.style.height = '100%';
       containerRef.current!.appendChild(canvas);
 
-      const W = () => app!.screen.width;
-      const H = () => app!.screen.height;
+      // ── Full-screen quad as a Mesh ──────────────────────────────
+      // Two triangles covering the screen, with UVs from (0,0) to (1,1).
+      const w = app.screen.width;
+      const h = app.screen.height;
 
-      // ── Nebula layer ──────────────────────────────────────────────
-      const nebulaContainer = new PIXI.Container();
-      app.stage.addChild(nebulaContainer);
+      const geometry = new PIXI.MeshGeometry({
+        positions: new Float32Array([
+          0, 0,
+          w, 0,
+          w, h,
+          0, h,
+        ]),
+        uvs: new Float32Array([
+          0, 0,
+          1, 0,
+          1, 1,
+          0, 1,
+        ]),
+        indices: new Uint32Array([0, 1, 2, 0, 2, 3]),
+      });
 
-      interface NebulaCloud {
-        graphic: import('pixi.js').Graphics;
-        baseX: number;
-        baseY: number;
-        phase: number;
-        speed: number;
-        baseAlpha: number;
-      }
+      const shader = PIXI.Shader.from({
+        gl: {
+          vertex: VERTEX,
+          fragment: FRAGMENT,
+        },
+        resources: {
+          galaxyUniforms: {
+            uTime:       { value: 0, type: 'f32' },
+            uResolution: { value: new Float32Array([w * dpr, h * dpr]), type: 'vec2<f32>' },
+            uMouse:      { value: new Float32Array([0, 0]), type: 'vec2<f32>' },
+          },
+        },
+      });
 
-      // Real nebulae are near-invisible wisps — very high blur, very low alpha
-      const cloudConfigs = [
-        { color: 0x2d0a4e, alpha: 0.9,  rx: 0.35, ry: 0.45, rw: 700, rh: 380, blur: 130 }, // diffuse purple arm
-        { color: 0x0d1b4b, alpha: 0.85, rx: 0.65, ry: 0.55, rw: 750, rh: 420, blur: 140 }, // deep blue arm
-        { color: 0x1a0a3d, alpha: 0.7,  rx: 0.50, ry: 0.30, rw: 580, rh: 280, blur: 120 }, // violet wisp
-        { color: 0x0a1628, alpha: 0.75, rx: 0.20, ry: 0.65, rw: 600, rh: 350, blur: 135 }, // dark blue wisp
-        { color: 0x200838, alpha: 0.6,  rx: 0.78, ry: 0.35, rw: 520, rh: 300, blur: 115 }, // faint purple
-        { color: 0x0e0b2e, alpha: 0.65, rx: 0.50, ry: 0.70, rw: 640, rh: 360, blur: 125 }, // indigo band
-      ];
+      const mesh = new PIXI.Mesh({ geometry, shader });
+      app.stage.addChild(mesh);
 
-      const nebulaClouds: NebulaCloud[] = [];
-
-      for (const cfg of cloudConfigs) {
-        const g = new PIXI.Graphics();
-        g.ellipse(0, 0, cfg.rw, cfg.rh);
-        g.fill({ color: cfg.color, alpha: cfg.alpha });
-        g.x = W() * cfg.rx;
-        g.y = H() * cfg.ry;
-        g.blendMode = 'add';
-
-        const blur = new PIXI.BlurFilter({ strength: cfg.blur, quality: 3 });
-        g.filters = [blur];
-
-        nebulaContainer.addChild(g);
-        nebulaClouds.push({
-          graphic: g,
-          baseX: cfg.rx,
-          baseY: cfg.ry,
-          phase: Math.random() * Math.PI * 2,
-          speed: 0.015 + Math.random() * 0.02, // imperceptibly slow
-          baseAlpha: cfg.alpha,
-        });
-      }
-
-      // Galactic core — a barely-visible warm glow at center
-      const core = new PIXI.Graphics();
-      core.circle(0, 0, 220);
-      core.fill({ color: 0x3b1f6b, alpha: 0.5 });
-      core.x = W() * 0.5;
-      core.y = H() * 0.48;
-      core.blendMode = 'add';
-      core.filters = [new PIXI.BlurFilter({ strength: 90, quality: 3 })];
-      nebulaContainer.addChild(core);
-      nebulaClouds.push({ graphic: core, baseX: 0.5, baseY: 0.48, phase: 0, speed: 0.008, baseAlpha: 0.5 });
-
-      // Three star containers at different depths for parallax layering
-      const bgStarsContainer   = new PIXI.Container(); // furthest — sub-pixel cluster
-      const midStarsContainer  = new PIXI.Container(); // mid — small field stars
-      const nearStarsContainer = new PIXI.Container(); // closest — bright/glow stars
-      app.stage.addChild(bgStarsContainer);
-      app.stage.addChild(midStarsContainer);
-      app.stage.addChild(nearStarsContainer);
-
-      // Each star tracks its own orbital path around the galactic center
-      interface Star {
-        graphic: import('pixi.js').Graphics;
-        baseAlpha: number;
-        twinkleSpeed: number;
-        twinklePhase: number;
-        cx: number;        // orbital center x
-        cy: number;        // orbital center y
-        angle: number;     // current orbital angle (radians)
-        dist: number;      // orbital radius (pixels)
-        orbitSpeed: number; // rad per tick — inner stars faster (differential rotation)
-      }
-
-      const stars: Star[] = [];
-      const dimColors  = [0xffffff, 0xdde8ff, 0xccd6f6, 0xe8f4ff, 0xf0f4ff];
-      const warmColors = [0xfff4e0, 0xffe8cc, 0xffd9a0];
-
-      // Galactic center (fixed at init — stars orbit around this point)
-      const GCX = W() * 0.5;
-      const GCY = H() * 0.48;
-
-      // Differential rotation: inner stars spin faster, like a real galaxy
-      const orbitSpeed = (dist: number) => 0.0018 / (1 + dist / 120);
-
-      const makeStar = (
-        container: import('pixi.js').Container,
-        x: number, y: number,
-        r: number, color: number,
-        baseAlpha: number,
-        twinkleSpeed: number,
-        blendMode?: string,
-        blurStrength?: number,
-      ): Star => {
-        const g = new PIXI.Graphics();
-        g.circle(0, 0, r);
-        g.fill({ color, alpha: 1 });
-        g.x = x;
-        g.y = y;
-        if (blendMode) g.blendMode = blendMode as import('pixi.js').BLEND_MODES;
-        if (blurStrength) g.filters = [new PIXI.BlurFilter({ strength: blurStrength, quality: 2 })];
-        container.addChild(g);
-        const dx = x - GCX;
-        const dy = y - GCY;
-        const dist = Math.sqrt(dx * dx + dy * dy);
-        return {
-          graphic: g,
-          baseAlpha,
-          twinkleSpeed,
-          twinklePhase: Math.random() * Math.PI * 2,
-          cx: GCX,
-          cy: GCY,
-          angle: Math.atan2(dy, dx),
-          dist,
-          orbitSpeed: orbitSpeed(dist),
-        };
-      };
-
-      // Galaxy-weighted position: denser toward core
-      const galaxyPos = () => {
-        const angle = Math.random() * Math.PI * 2;
-        const raw = Math.random();
-        const t = raw < 0.55
-          ? Math.sqrt(raw / 0.55) * 0.28
-          : 0.28 + ((raw - 0.55) / 0.45) * 0.72;
-        return {
-          x: GCX + Math.cos(angle) * t * W() * 0.7,
-          y: GCY + Math.sin(angle) * t * H() * 0.6,
-        };
-      };
-
-      // 500 sub-pixel background stars — tight core cluster
-      for (let i = 0; i < 500; i++) {
-        const pos = galaxyPos();
-        const isWarm = Math.random() < 0.08;
-        const color = isWarm
-          ? warmColors[Math.floor(Math.random() * warmColors.length)]
-          : dimColors[Math.floor(Math.random() * dimColors.length)];
-        stars.push(makeStar(bgStarsContainer, pos.x, pos.y, 0.2 + Math.random() * 0.55, color,
-          0.15 + Math.random() * 0.55, 0.003 + Math.random() * 0.012));
-      }
-
-      // 120 small visible stars scattered across the field
-      for (let i = 0; i < 120; i++) {
-        const x = Math.random() * W();
-        const y = Math.random() * H();
-        const color = dimColors[Math.floor(Math.random() * dimColors.length)];
-        stars.push(makeStar(midStarsContainer, x, y, 0.5 + Math.random(), color,
-          0.35 + Math.random() * 0.5, 0.006 + Math.random() * 0.018));
-      }
-
-      // 40 brighter stars with a faint halo
-      for (let i = 0; i < 40; i++) {
-        const x = Math.random() * W();
-        const y = Math.random() * H();
-        const isWarm = Math.random() < 0.15;
-        const color = isWarm
-          ? warmColors[Math.floor(Math.random() * warmColors.length)]
-          : dimColors[Math.floor(Math.random() * dimColors.length)];
-        stars.push(makeStar(nearStarsContainer, x, y, 1.0 + Math.random() * 1.4, color,
-          0.55 + Math.random() * 0.45, 0.01 + Math.random() * 0.025,
-          'add', 2.5));
-      }
-
-      // 12 prominent stars with visible glow
-      const accentColors = [0xffffff, 0xdde8ff, 0xc7d2fe, 0xfff4e0];
-      for (let i = 0; i < 12; i++) {
-        const x = Math.random() * W();
-        const y = Math.random() * H();
-        const color = accentColors[Math.floor(Math.random() * accentColors.length)];
-        stars.push(makeStar(nearStarsContainer, x, y, 1.8 + Math.random() * 2.0, color,
-          0.75 + Math.random() * 0.25, 0.008 + Math.random() * 0.015,
-          'add', 6));
-      }
-
-      // ── Parallax mouse tracking ───────────────────────────────────
-      // Normalized mouse offset from screen center (-1 → +1)
-      const mouse   = { x: 0, y: 0 }; // raw target
-      const smooth  = { x: 0, y: 0 }; // lerped value
+      // ── Mouse tracking ─────────────────────────────────────────
+      const mouse  = { x: 0, y: 0 };
+      const smooth = { x: 0, y: 0 };
 
       const onMouseMove = (e: MouseEvent) => {
         mouse.x = (e.clientX / window.innerWidth  - 0.5) * 2;
@@ -234,63 +321,50 @@ export default function GalaxyCanvas() {
       };
       window.addEventListener('mousemove', onMouseMove);
 
-      // Parallax depth factors (multiplied by half screen dimension)
-      // Higher = closer to camera = more movement
-      const P_NEBULA = 0.006;
-      const P_BG     = 0.012;
-      const P_MID    = 0.024;
-      const P_NEAR   = 0.042;
+      // ── Resize ─────────────────────────────────────────────────
+      const onResize = () => {
+        if (!app) return;
+        const curDpr = Math.min(window.devicePixelRatio || 1, 1.5);
+        const nw = app.screen.width;
+        const nh = app.screen.height;
 
-      // ── Animation loop ────────────────────────────────────────────
+        // Update quad positions to cover new screen size
+        const pos = geometry.getAttribute('aPosition');
+        pos.buffer.data = new Float32Array([
+          0, 0,
+          nw, 0,
+          nw, nh,
+          0, nh,
+        ]);
+        pos.buffer.update();
+
+        const uniforms = shader.resources.galaxyUniforms.uniforms;
+        uniforms.uResolution[0] = nw * curDpr;
+        uniforms.uResolution[1] = nh * curDpr;
+      };
+      window.addEventListener('resize', onResize);
+
+      // ── Animation loop ─────────────────────────────────────────
       let time = 0;
 
       app.ticker.add(() => {
-        time += 0.003;
-
-        // Smooth mouse with lerp
+        time += 1;
         smooth.x += (mouse.x - smooth.x) * 0.055;
         smooth.y += (mouse.y - smooth.y) * 0.055;
 
-        const hw = W() * 0.5;
-        const hh = H() * 0.5;
-
-        // Parallax offsets per layer
-        const px = { nebula: smooth.x * hw * P_NEBULA, bg: smooth.x * hw * P_BG,
-                     mid: smooth.x * hw * P_MID,        near: smooth.x * hw * P_NEAR };
-        const py = { nebula: smooth.y * hh * P_NEBULA, bg: smooth.y * hh * P_BG,
-                     mid: smooth.y * hh * P_MID,        near: smooth.y * hh * P_NEAR };
-
-        // Nebula clouds: drift + alpha breathe + parallax
-        for (const cloud of nebulaClouds) {
-          const t = time * cloud.speed + cloud.phase;
-          cloud.graphic.x = W() * cloud.baseX + Math.sin(t) * 55;
-          cloud.graphic.y = H() * cloud.baseY + Math.cos(t * 0.65) * 40;
-          cloud.graphic.scale.set(0.93 + Math.sin(t * 0.35) * 0.07);
-          cloud.graphic.alpha = cloud.baseAlpha * (0.75 + Math.sin(t * 0.5) * 0.25);
-        }
-        nebulaContainer.rotation += 0.000025;
-        nebulaContainer.x = px.nebula;
-        nebulaContainer.y = py.nebula;
-
-        // Star container parallax offsets
-        bgStarsContainer.x   = px.bg;   bgStarsContainer.y   = py.bg;
-        midStarsContainer.x  = px.mid;  midStarsContainer.y  = py.mid;
-        nearStarsContainer.x = px.near; nearStarsContainer.y = py.near;
-
-        // Stars: orbital rotation + twinkle
-        for (const star of stars) {
-          star.angle += star.orbitSpeed;
-          star.graphic.x = star.cx + Math.cos(star.angle) * star.dist;
-          star.graphic.y = star.cy + Math.sin(star.angle) * star.dist;
-          star.twinklePhase += star.twinkleSpeed;
-          star.graphic.alpha = star.baseAlpha * (0.65 + Math.sin(star.twinklePhase) * 0.35);
-        }
+        const uniforms = shader.resources.galaxyUniforms.uniforms;
+        uniforms.uTime = time;
+        uniforms.uMouse[0] = smooth.x;
+        uniforms.uMouse[1] = smooth.y;
       });
 
-      cleanup = () => window.removeEventListener('mousemove', onMouseMove);
+      cleanup = () => {
+        window.removeEventListener('mousemove', onMouseMove);
+        window.removeEventListener('resize', onResize);
+      };
     };
 
-    init().then(r => { cleanup = r ?? cleanup; });
+    init();
 
     return () => {
       destroyed = true;
