@@ -51,13 +51,15 @@ const FRAGMENT = `
     return 0.5 + 0.5 * mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
   }
 
+  // Combined rotation + scale matrix (rot * 2) — pre-computed constant shared by all fBm calls
+  const mat2 ROT2 = mat2(1.6, 1.2, -1.2, 1.6);
+
   // Cheap fBm for warp offsets (3 octaves — fast)
   float fbmLow(vec2 p) {
     float v = 0.0, a = 0.5;
-    mat2 rot = mat2(0.8, 0.6, -0.6, 0.8);
     for (int i = 0; i < 3; i++) {
       v += a * gnoise(p);
-      p = rot * p * 2.0;
+      p = ROT2 * p;
       a *= 0.5;
     }
     return v;
@@ -66,10 +68,9 @@ const FRAGMENT = `
   // Detail fBm for final sample (5 octaves)
   float fbm(vec2 p) {
     float v = 0.0, a = 0.5;
-    mat2 rot = mat2(0.8, 0.6, -0.6, 0.8);
     for (int i = 0; i < 5; i++) {
       v += a * gnoise(p);
-      p = rot * p * 2.0;
+      p = ROT2 * p;
       a *= 0.5;
     }
     return v;
@@ -328,6 +329,10 @@ function doRender(containerRef: RefObject<HTMLDivElement | null>) {
         const mesh = new Mesh({geometry, shader});
         app.stage.addChild(mesh);
 
+        // Pre-cache hot-path references — avoids repeated property chain walks each frame/resize
+        const uniforms = shader.resources.galaxyUniforms.uniforms;
+        const posAttribute = geometry.getAttribute('aPosition');
+
         // ── Mouse tracking via PixiJS event system ─────────────────
         const mouse = {x: 0, y: 0};
         const smooth = {x: 0, y: 0};
@@ -346,17 +351,13 @@ function doRender(containerRef: RefObject<HTMLDivElement | null>) {
             const nw = app.screen.width;
             const nh = app.screen.height;
 
-            // Update quad positions to cover new screen size
-            const pos = geometry.getAttribute('aPosition');
-            pos.buffer.data = new Float32Array([
-                0, 0,
-                nw, 0,
-                nw, nh,
-                0, nh,
-            ]);
-            pos.buffer.update();
+            // Mutate existing buffer in-place — avoids Float32Array allocation on every resize
+            const d = posAttribute.buffer.data as Float32Array;
+            d[2] = nw;
+            d[4] = nw; d[5] = nh;
+            d[7] = nh;
+            posAttribute.buffer.update();
 
-            const uniforms = shader.resources.galaxyUniforms.uniforms;
             uniforms.uResolution[0] = nw * curDpr;
             uniforms.uResolution[1] = nh * curDpr;
         };
@@ -365,12 +366,24 @@ function doRender(containerRef: RefObject<HTMLDivElement | null>) {
         // ── Animation loop ─────────────────────────────────────────
         let time = 0;
 
-        app.ticker.add(() => {
-            time += 1;
-            smooth.x += (mouse.x - smooth.x) * 0.055;
-            smooth.y += (mouse.y - smooth.y) * 0.055;
+        // Pause rendering when the tab is hidden — saves GPU/CPU on inactive tabs
+        const onVisibilityChange = () => {
+            if (document.hidden) app!.ticker.stop();
+            else app!.ticker.start();
+        };
+        document.addEventListener('visibilitychange', onVisibilityChange);
 
-            const uniforms = shader.resources.galaxyUniforms.uniforms;
+        app.ticker.add(() => {
+            // Use deltaTime so animation speed is frame-rate independent
+            // (deltaTime ≈ 1.0 at 60 fps, 0.5 at 120 fps, 2.0 at 30 fps)
+            const dt = app!.ticker.deltaTime;
+            time += dt;
+
+            // Frame-rate independent exponential smoothing: equivalent to 0.055 factor at 60 fps
+            const factor = 1 - Math.pow(0.945, dt);
+            smooth.x += (mouse.x - smooth.x) * factor;
+            smooth.y += (mouse.y - smooth.y) * factor;
+
             uniforms.uTime = time;
             uniforms.uMouse[0] = smooth.x;
             uniforms.uMouse[1] = smooth.y;
@@ -378,6 +391,7 @@ function doRender(containerRef: RefObject<HTMLDivElement | null>) {
 
         cleanup = () => {
             window.removeEventListener('resize', onResize);
+            document.removeEventListener('visibilitychange', onVisibilityChange);
         };
     };
 
