@@ -124,20 +124,19 @@ const FRAGMENT = `
   }
 
   // ─── Nebula layer helper ───────────────────────────────────────
-  // Single domain warp using cheap fbmLow, final sample with fbm.
-  // Total: 2×3 + 1×5 = 11 gnoise calls (was 5×7 = 35).
-  vec3 nebulaLayer(vec2 uvP, vec2 galCenter, float aspect, float t,
+  // Each cloud has its own center, stretch, and noise-eroded edges.
+  vec3 nebulaLayer(vec2 uvP, vec2 center, float aspect, float t,
                    float freq, vec2 seedOff, vec3 tint,
                    float intensity, float breathSpeed, float breathPhase,
-                   float falloffRadius) {
-    vec2 nUV = (uvP - galCenter) * vec2(aspect, 1.0);
+                   float falloffRadius, vec2 stretch) {
+    vec2 nUV = (uvP - center) * vec2(aspect, 1.0) * stretch;
     float ra = t * 0.08;
     mat2 rot = mat2(cos(ra), -sin(ra), sin(ra), cos(ra));
     nUV = rot * nUV;
 
     vec2 p = nUV * freq + seedOff;
 
-    // Single warp pass using cheap noise — organic flowing distortion
+    // Single warp pass — organic flowing distortion
     float wt = t * 1.2;
     vec2 warp = vec2(
       fbmLow(p + vec2(wt * 0.6, -wt * 0.4) + 10.0),
@@ -147,10 +146,17 @@ const FRAGMENT = `
     float n = fbm(p + warp * 2.2);
 
     float breath = 0.75 + 0.25 * sin(uTime * breathSpeed + breathPhase);
-    float dGC = length((uvP - galCenter) * vec2(aspect, 1.0));
-    float mask = smoothstep(falloffRadius, 0.0, dGC);
 
-    return tint * n * intensity * breath * mask;
+    // Noise-modulated edge: breaks the perfect circle into wispy, irregular shapes
+    float edgeNoise = fbmLow(nUV * 3.0 + seedOff * 0.1 + vec2(t * 0.4, t * 0.3));
+    float dist = length(nUV);
+    float noisyRadius = falloffRadius * (0.6 + 0.8 * edgeNoise);
+    float mask = smoothstep(noisyRadius, noisyRadius * 0.15, dist);
+
+    // Additional density variation — some parts of the cloud are thinner
+    float densityVar = 0.5 + 0.5 * fbmLow(nUV * 2.0 + seedOff * 0.3 + vec2(t * 0.2));
+    
+    return tint * n * intensity * breath * mask * densityVar;
   }
 
   // ─── Main ──────────────────────────────────────────────────────
@@ -177,15 +183,17 @@ const FRAGMENT = `
     // ════════════════════════════════════════════════════════════
     // DEPTH 1 — Deep nebula (furthest back)
     // ════════════════════════════════════════════════════════════
-    col += nebulaLayer(uvDeepNeb, galCenter, aspect, t,
-      4.0, vec2(0.0),  vec3(0.176, 0.039, 0.306), 0.85, 0.0075, 0.0, 0.90);
-    col += nebulaLayer(uvDeepNeb, galCenter, aspect, t,
-      5.0, vec2(50.0), vec3(0.051, 0.106, 0.294), 0.80, 0.009, 1.5, 0.95);
+    col += nebulaLayer(uvDeepNeb, vec2(0.45, 0.42), aspect, t,
+      4.0, vec2(0.0),  vec3(0.12, 0.04, 0.32), 0.80, 0.0075, 0.0, 0.95, vec2(1.0, 1.4));   // deep violet — tall, left of center
+    col += nebulaLayer(uvDeepNeb, vec2(0.58, 0.55), aspect, t,
+      5.0, vec2(50.0), vec3(0.06, 0.10, 0.35), 0.75, 0.009, 1.5, 1.0, vec2(1.5, 0.8));     // navy blue — wide, lower right
+    col += nebulaLayer(uvDeepNeb, vec2(0.38, 0.52), aspect, t,
+      3.8, vec2(70.0), vec3(0.22, 0.04, 0.28), 0.55, 0.008, 0.8, 0.80, vec2(1.2, 1.0));    // rich purple — left
 
-    // Galactic core glow (deep)
+    // Galactic core glow — warm purple-pink
     float coreGlow = exp(-dGC * dGC * 8.0) * 0.45;
     float corePulse = 0.85 + 0.15 * sin(uTime * 0.008);
-    col += vec3(0.231, 0.122, 0.420) * coreGlow * corePulse;
+    col += vec3(0.28, 0.10, 0.42) * coreGlow * corePulse;
 
     // ════════════════════════════════════════════════════════════
     // DEPTH 2 — Background stars (distant dust, sparse)
@@ -197,10 +205,12 @@ const FRAGMENT = `
     // ════════════════════════════════════════════════════════════
     // DEPTH 3 — Mid nebula (partially obscures bg stars)
     // ════════════════════════════════════════════════════════════
-    col += nebulaLayer(uvMidNeb, galCenter, aspect, t,
-      5.5, vec2(100.0), vec3(0.102, 0.039, 0.239), 0.55, 0.006, 3.0, 0.80);
-    col += nebulaLayer(uvMidNeb, galCenter, aspect, t,
-      4.2, vec2(150.0), vec3(0.039, 0.086, 0.157), 0.50, 0.007, 2.0, 0.85);
+    col += nebulaLayer(uvMidNeb, vec2(0.55, 0.40), aspect, t,
+      5.5, vec2(100.0), vec3(0.18, 0.05, 0.30), 0.50, 0.006, 3.0, 0.75, vec2(0.9, 1.3));   // plum — tall, right of center
+    col += nebulaLayer(uvMidNeb, vec2(0.40, 0.58), aspect, t,
+      4.2, vec2(150.0), vec3(0.08, 0.12, 0.30), 0.45, 0.007, 2.0, 0.85, vec2(1.6, 0.7));   // royal blue — wide band, lower left
+    col += nebulaLayer(uvMidNeb, vec2(0.62, 0.48), aspect, t,
+      4.8, vec2(170.0), vec3(0.30, 0.06, 0.24), 0.35, 0.0065, 2.5, 0.70, vec2(1.0, 1.1));  // magenta — right side
 
     // ════════════════════════════════════════════════════════════
     // DEPTH 4 — Mid-field stars (moderate, fewer)
@@ -211,10 +221,12 @@ const FRAGMENT = `
     // ════════════════════════════════════════════════════════════
     // DEPTH 5 — Near nebula wisps (foreground haze over mid stars)
     // ════════════════════════════════════════════════════════════
-    col += nebulaLayer(uvNearNeb, galCenter, aspect, t,
-      6.0, vec2(200.0), vec3(0.125, 0.031, 0.220), 0.40, 0.008, 4.5, 0.70);
-    col += nebulaLayer(uvNearNeb, galCenter, aspect, t,
-      3.5, vec2(250.0), vec3(0.055, 0.043, 0.180), 0.35, 0.005, 5.5, 0.75);
+    col += nebulaLayer(uvNearNeb, vec2(0.48, 0.35), aspect, t,
+      6.0, vec2(200.0), vec3(0.25, 0.08, 0.32), 0.35, 0.008, 4.5, 0.65, vec2(1.3, 0.8));   // bright purple — upper, wide
+    col += nebulaLayer(uvNearNeb, vec2(0.35, 0.50), aspect, t,
+      3.5, vec2(250.0), vec3(0.32, 0.10, 0.28), 0.28, 0.005, 5.5, 0.70, vec2(0.8, 1.5));   // hot pink — left, tall
+    col += nebulaLayer(uvNearNeb, vec2(0.60, 0.60), aspect, t,
+      5.2, vec2(280.0), vec3(0.10, 0.14, 0.34), 0.30, 0.007, 5.0, 0.68, vec2(1.4, 0.9));   // cerulean — lower right, wide
 
     // ════════════════════════════════════════════════════════════
     // DEPTH 6 — Near bright stars (sparse, warm/cool tinted)
